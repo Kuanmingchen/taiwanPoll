@@ -1,0 +1,191 @@
+---
+title: "選舉民調準嗎？"
+output: html_document
+---
+To do: 
+1.Change regressions into charts
+2.Do a bump chart for the rank changes in different specification
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+dt <- readRDS("dt.rds")
+library(ggplot2)
+library(data.table)
+library(knitr)
+library(pander)
+```
+
+## Sample Selection
+
+我選取了 2010, 2012, 2014, 2016, 2018 五次大選中，總統選舉及直轄市長的民意調查。
+資料中總共有 2144 個候選人民調數據，有 59 個不同的民調資料來源。
+
+```{r}
+dt[,.N] # Number of Election-Candidate Count
+length(unique(dt$Institute)) # Number of unique institute
+dt[,Institute := as.factor(Institute)]
+dtInstituteCount <- dt[,list(N = .N,noElection = length(unique(Election))), by = Institute]
+ggplot(dtInstituteCount, aes(x=N)) + 
+  theme(text = element_text(family = "Heiti TC Light")) +
+  geom_histogram() + xlab("候選人數") + ylab("次數") + 
+  ggtitle("原始民調機構民調次數分佈")
+```
+
+前 15 大民調機構如下：
+```{r}
+setorder(dtInstituteCount,-N)
+pander(dtInstituteCount[1:15,])
+```
+
+此 15 大機構佔的民調比例達所有民調的 79 %。
+```{r}
+sum(dtInstituteCount[1:15,N])/nrow(dt)
+```
+選取前 15 大民調機構，並且去除部分未包含未表態或者候選人最後退選的民調，
+```{r}
+dtSample <- dt[Institute %in% dtInstituteCount[1:15,Institute]]
+dtSample <- dtSample[!is.na(NoResponse)]
+dtSample <- dtSample[!is.na(voteShare)]
+
+```
+
+
+### 民調的時間
+
+經過上述的樣本選擇後，民調所涵蓋的時間依然極為廣泛。最早一組在選舉 2 年前即開始進行民調，最晚的民調於封關之後仍然持續。我們排除民調封關 (選舉 10 天前) 之後的樣本，也排除選舉 1 年以前的樣本。經過這樣的樣本選擇之後，我們留下 76 % 的樣本。
+```{r}
+ggplot(data = dtSample, aes(x = preDate)) +
+  geom_histogram() + xlab("選舉前(日)") + ylab("次數") + ggtitle("民調次數與選舉日")+
+    theme(text = element_text(family = "Heiti TC Light")) 
+
+dtSample <- dtSample[preDate <= -10 & preDate >= -366]
+```
+
+最後剩下的樣本百分比：
+```{r}
+dtSample[,.N]/dt[,.N]
+```
+
+
+
+
+## 假設真實的支持度在民調的過程中沒有變化
+
+### 民調越靠近選舉越準嗎？
+
+我先將選舉前每週與每月加總：
+```{r}
+dtSample[,preWeek := ceiling(preDate/7)]
+ggplot(data = dtSample[,mean(abs(Error)), by = preWeek], 
+       aes(x = preWeek, y = V1 ))+ geom_line(stat="smooth",method = "lm",
+             alpha = 0.5)+ geom_point() +
+       xlab("選舉前(週)") + ylab("民調與選舉結果差絕對值") + 
+       theme(text = element_text(family = "Heiti TC Light")) 
+
+dtSample[,preMonth := ceiling(preDate/30)]
+ggplot(data = dtSample[,mean(abs(Error)), by = preMonth], 
+       aes(x = preMonth, y = V1 )) + geom_line(stat="smooth",method = "lm",
+             alpha = 0.5)+ geom_point()+
+       xlab("選舉前(月)") + ylab("民調與選舉結果差絕對值") + 
+       theme(text = element_text(family = "Heiti TC Light")) 
+
+```
+
+
+兩大黨哪個的民調比較難猜？
+```{r}
+group.colors <- c("民主進步黨" = "#007500", "中國國民黨" = "#000093")
+
+ggplot(data = dtSample[zhParty %in% c("民主進步黨","中國國民黨"),mean(abs(Error)), by = c("preMonth","zhParty")], 
+       aes(x = preMonth, y = V1 , color = zhParty)) + geom_line(stat="smooth",method = "lm",
+             alpha = 0.5)+ geom_point()+
+       xlab("選舉前(月)") + ylab("民調與選舉結果差絕對值") + 
+       theme(text = element_text(family = "Heiti TC Light")) +
+    scale_color_manual(values=group.colors)
+
+
+pander(lm(data = dtSample[zhParty %in% c("民主進步黨","中國國民黨")],
+   formula = I(abs(Error)) ~ zhParty),caption = "誤差民進黨與國民黨無顯著差異",
+   add.significance.stars = TRUE)
+
+```
+
+
+```{r}
+dtSample[,underPredicted := (Error > 0)]
+pander(lm(data = dtSample[zhParty %in% c("民主進步黨","中國國民黨")],
+   formula = underPredicted ~ zhParty),caption = '民進黨民調被低估的其實比較少',
+   add.significance.stars = TRUE)
+
+```
+
+
+
+
+
+
+### 哪家民調比較準？
+
+
+```{r}
+dtSample[,underPredicted := (Error > 0)]
+pander(lm(data = dtSample[zhParty %in% c("民主進步黨","中國國民黨")],
+   formula = underPredicted ~ zhParty),caption = '民進黨民調被低估的其實比較少',
+   add.significance.stars = TRUE)
+
+
+fit <- lm(data = dtSample,
+   formula = I(abs(Error)) ~ 0+ Institute)
+
+dtAbsError <- data.table(Institute = names(fit$coefficients), AbsError = fit$coefficients, SE = summary(fit)$coefficient[,2])
+dtAbsError[,Institute := gsub(pattern = "Institute",replacement = "",x = Institute)]
+setorder(dtAbsError,AbsError)
+pander(dtAbsError)
+```
+
+
+控制距離選舉的時間
+```{r}
+fit <- lm(data = dtSample,
+   formula = I(abs(Error)) ~ 0+ Institute + preDate)
+dtAbsError <- data.table(Institute = names(fit$coefficients), AbsError = fit$coefficients, SE = summary(fit)$coefficient[,2])
+dtAbsError <- dtAbsError[grep(pattern = "Institute",x = Institute)]
+dtAbsError[,Institute := gsub(pattern = "Institute",replacement = "",x = Institute)]
+setorder(dtAbsError,AbsError)
+pander(dtAbsError)
+```
+
+
+每家最後一個預測
+```{r}
+dtSample[,lastForElection := (Date == max(Date))   ,by = c("Institute","Candidate","Election","District")]
+fit <- lm(data = dtSample[lastForElection == TRUE],
+   formula = I(abs(Error)) ~ 0+ Institute + preDate)
+dtAbsError <- data.table(Institute = names(fit$coefficients), AbsError = fit$coefficients, SE = summary(fit)$coefficient[,2])
+dtAbsError <- dtAbsError[grep(pattern = "Institute",x = Institute)]
+dtAbsError[,Institute := gsub(pattern = "Institute",replacement = "",x = Institute)]
+setorder(dtAbsError,AbsError)
+pander(dtAbsError)
+```
+
+
+
+
+
+```{r}
+
+fit <- lm(data = dtSample[zhParty %in% c("民主進步黨","中國國民黨"),],
+    formula = Error ~ 0 + Institute + Institute*zhParty + zhParty + preDate)
+
+fit <- lm(data = dtSample[zhParty %in% c("民主進步黨","中國國民黨"),],
+    formula = Error ~ 0 + Institute + Institute*zhParty + zhParty + preDate + Election)
+
+dtSample[,lastForElection := (Date == max(Date))   ,by = c("Institute","Candidate","Election","District")]
+fit <- lm(data = dtSample[lastForElection == TRUE],
+   formula = I(abs(Error)) ~ 0+ Institute + preDate)
+dtAbsError <- data.table(Institute = names(fit$coefficients), AbsError = fit$coefficients, SE = summary(fit)$coefficient[,2])
+dtAbsError <- dtAbsError[grep(pattern = "Institute",x = Institute)]
+dtAbsError[,Institute := gsub(pattern = "Institute",replacement = "",x = Institute)]
+setorder(dtAbsError,AbsError)
+pander(dtAbsError)
+```
