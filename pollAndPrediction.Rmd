@@ -1,6 +1,8 @@
 ---
 title: "選舉民調準嗎？"
-output: html_document
+output:
+  html_document: default
+  pdf_document: default
 ---
 To do: 
 1.Change regressions into charts
@@ -171,21 +173,11 @@ pander(dtAbsError)
 
 
 
-
+### 有沒有機構效應？
 ```{r}
-
-fit <- lm(data = dtSample[zhParty %in% c("民主進步黨","中國國民黨"),],
-    formula = Error ~ 0 + Institute + Institute*zhParty + zhParty + preDate)
 
 fit <- lm(data = dtSample[zhParty %in% c("民主進步黨","中國國民黨"),],
     formula = Error ~ 0 + Institute + Institute*zhParty + zhParty + preDate + Election)
 
-dtSample[,lastForElection := (Date == max(Date))   ,by = c("Institute","Candidate","Election","District")]
-fit <- lm(data = dtSample[lastForElection == TRUE],
-   formula = I(abs(Error)) ~ 0+ Institute + preDate)
-dtAbsError <- data.table(Institute = names(fit$coefficients), AbsError = fit$coefficients, SE = summary(fit)$coefficient[,2])
-dtAbsError <- dtAbsError[grep(pattern = "Institute",x = Institute)]
-dtAbsError[,Institute := gsub(pattern = "Institute",replacement = "",x = Institute)]
-setorder(dtAbsError,AbsError)
-pander(dtAbsError)
+pander(fit,add.significance.stars = TRUE)
 ```
